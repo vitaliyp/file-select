@@ -11,8 +11,8 @@ pub fn read_stdin_paths() -> Vec<PathBuf> {
     stdin
         .lock()
         .lines()
-        .filter_map(|line| line.ok())
-        .map(|line| line.trim().to_string())
+        .map_while(Result::ok)
+        .map(|line| line.trim().to_owned())
         .filter(|line| !line.is_empty())
         .map(PathBuf::from)
         .collect()

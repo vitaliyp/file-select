@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -8,19 +10,61 @@ use ratatui::{
 
 use crate::app::{App, FocusedPane};
 
+/// Style constants
+mod styles {
+    use super::*;
+
+    pub const CURSOR: &str = "> ";
+    pub const NO_CURSOR: &str = "  ";
+    pub const CHECKED: &str = "[x] ";
+    pub const UNCHECKED: &str = "[ ] ";
+
+    pub fn focused_border() -> Style {
+        Style::default().fg(Color::Cyan)
+    }
+
+    pub fn unfocused_border() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    pub fn cursor_style() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn invalid_style() -> Style {
+        Style::default().fg(Color::Red)
+    }
+
+    pub fn invalid_cursor_style() -> Style {
+        Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn directory_style() -> Style {
+        Style::default().fg(Color::Blue)
+    }
+
+    pub fn normal_style() -> Style {
+        Style::default()
+    }
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
+    let [status_area, main_area, legend_area] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
-        .split(frame.area());
+        .areas(frame.area());
 
-    render_status_bar(frame, app, chunks[0]);
-    render_main_panels(frame, app, chunks[1]);
-    render_legend(frame, chunks[2]);
+    render_status_bar(frame, app, status_area);
+    render_main_panels(frame, app, main_area);
+    render_legend(frame, legend_area);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -32,21 +76,20 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_else(|_| app.browser.current_dir.display().to_string());
 
     let hidden_indicator = if app.browser.show_hidden { "[H]" } else { "[ ]" };
-
     let status_text = format!(" {}  {}", current_dir, hidden_indicator);
-    let status = Paragraph::new(status_text).style(Style::default().bg(Color::DarkGray));
 
+    let status = Paragraph::new(status_text).style(Style::default().bg(Color::DarkGray));
     frame.render_widget(status, area);
 }
 
 fn render_main_panels(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
+    let [files_area, selected_area] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(area);
+        .areas(area);
 
-    render_file_list(frame, app, chunks[0]);
-    render_selection_list(frame, app, chunks[1]);
+    render_file_list(frame, app, files_area);
+    render_selection_list(frame, app, selected_area);
 }
 
 fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
@@ -56,60 +99,32 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, entry)| {
+            let is_cursor = i == app.browser.cursor;
             let is_selected = if entry.is_invalid {
                 app.selection.is_invalid_selected(&entry.path)
             } else {
                 app.selection.is_selected(&entry.path)
             };
-            let checkbox = if is_selected { "[x]" } else { "[ ]" };
 
-            // For directories, count selected files inside
-            let name = if entry.is_dir {
-                let count = count_selected_in_dir(&entry.path, app);
-                if count > 0 {
-                    format!("{}/ ({})", entry.name, count)
-                } else {
-                    format!("{}/", entry.name)
-                }
-            } else {
-                entry.name.clone()
-            };
+            let name = format_entry_name(entry, app);
+            let cursor = if is_cursor { styles::CURSOR } else { styles::NO_CURSOR };
+            let checkbox = if is_selected { styles::CHECKED } else { styles::UNCHECKED };
 
-            let cursor = if i == app.browser.cursor { "> " } else { "  " };
+            let style = entry_style(entry.is_invalid, entry.is_dir, is_cursor);
 
-            let style = if entry.is_invalid {
-                // Invalid files are always red
-                if i == app.browser.cursor {
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Red)
-                }
-            } else if i == app.browser.cursor {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else if entry.is_dir {
-                Style::default().fg(Color::Blue)
-            } else {
-                Style::default()
-            };
-
-            let line = Line::from(vec![
+            ListItem::new(Line::from(vec![
                 Span::styled(cursor, style),
-                Span::styled(format!("{} ", checkbox), style),
+                Span::styled(checkbox, style),
                 Span::styled(name, style),
-            ]);
-
-            ListItem::new(line)
+            ]))
         })
         .collect();
 
-    let border_style = if app.focused_pane == FocusedPane::Files {
-        Style::default().fg(Color::Cyan)
+    let is_focused = app.focused_pane == FocusedPane::Files;
+    let border_style = if is_focused {
+        styles::focused_border()
     } else {
-        Style::default().fg(Color::DarkGray)
+        styles::unfocused_border()
     };
 
     let list = List::new(items).block(
@@ -122,21 +137,40 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
-/// Count how many selected files are inside a directory (including subdirectories)
-fn count_selected_in_dir(dir_path: &std::path::PathBuf, app: &App) -> usize {
-    let dir_canonical = match dir_path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return 0,
+fn format_entry_name(entry: &crate::file_browser::FileEntry, app: &App) -> String {
+    if entry.is_dir {
+        let count = count_selected_in_dir(&entry.path, app);
+        if count > 0 {
+            format!("{}/ ({})", entry.name, count)
+        } else {
+            format!("{}/", entry.name)
+        }
+    } else {
+        entry.name.clone()
+    }
+}
+
+fn entry_style(is_invalid: bool, is_dir: bool, is_cursor: bool) -> Style {
+    match (is_invalid, is_cursor) {
+        (true, true) => styles::invalid_cursor_style(),
+        (true, false) => styles::invalid_style(),
+        (false, true) => styles::cursor_style(),
+        (false, false) if is_dir => styles::directory_style(),
+        (false, false) => styles::normal_style(),
+    }
+}
+
+fn count_selected_in_dir(dir_path: &Path, app: &App) -> usize {
+    let Ok(dir_canonical) = dir_path.canonicalize() else {
+        return 0;
     };
 
-    // Count valid selected paths that start with this directory
     let valid_count = app
         .selection
         .iter_valid()
         .filter(|p| p.starts_with(&dir_canonical))
         .count();
 
-    // Count invalid selected paths that would be in this directory
     let invalid_count = app
         .selection
         .iter_invalid()
@@ -155,73 +189,32 @@ fn count_selected_in_dir(dir_path: &std::path::PathBuf, app: &App) -> usize {
 
 fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
     let title = format!("Selected ({})", app.selection.count());
-
-    // Collect valid paths
-    let valid_paths: Vec<(String, bool)> = app
-        .selection
-        .iter_valid()
-        .map(|p| {
-            let display = p
-                .strip_prefix(&app.base_dir)
-                .map(|rel| format!("./{}", rel.display()))
-                .unwrap_or_else(|_| p.display().to_string());
-            (display, true) // true = valid
-        })
-        .collect();
-
-    // Collect invalid paths
-    let invalid_paths: Vec<(String, bool)> = app
-        .selection
-        .iter_invalid()
-        .map(|p| {
-            let s = p.to_string_lossy();
-            let display = if s.starts_with("./") || s.starts_with('/') {
-                s.to_string()
-            } else {
-                format!("./{}", s)
-            };
-            (display, false) // false = invalid
-        })
-        .collect();
-
-    // Combine and sort
-    let mut all_paths: Vec<(String, bool)> = valid_paths;
-    all_paths.extend(invalid_paths);
-    all_paths.sort_by(|a, b| a.0.cmp(&b.0));
-
     let is_focused = app.focused_pane == FocusedPane::Selected;
+
+    let all_paths = collect_display_paths(app);
 
     let items: Vec<ListItem> = all_paths
         .into_iter()
         .enumerate()
-        .map(|(i, (p, is_valid))| {
+        .map(|(i, (display, is_valid))| {
             let is_cursor = is_focused && i == app.selected_cursor;
-            let cursor = if is_cursor { "> " } else { "  " };
+            let cursor = if is_cursor { styles::CURSOR } else { styles::NO_CURSOR };
 
-            let style = if is_cursor {
-                if is_valid {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD)
-                }
-            } else if is_valid {
-                Style::default()
-            } else {
-                Style::default().fg(Color::Red)
+            let style = match (is_valid, is_cursor) {
+                (_, true) if !is_valid => styles::invalid_cursor_style(),
+                (_, true) => styles::cursor_style(),
+                (false, false) => styles::invalid_style(),
+                (true, false) => styles::normal_style(),
             };
 
-            ListItem::new(Line::from(Span::styled(format!("{}{}", cursor, p), style)))
+            ListItem::new(Line::from(Span::styled(format!("{}{}", cursor, display), style)))
         })
         .collect();
 
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        styles::focused_border()
     } else {
-        Style::default().fg(Color::DarkGray)
+        styles::unfocused_border()
     };
 
     let list = List::new(items).block(
@@ -234,6 +227,22 @@ fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
+fn collect_display_paths(app: &App) -> Vec<(String, bool)> {
+    let mut paths: Vec<(String, bool)> = app
+        .selection
+        .iter_valid()
+        .map(|p| (app.format_path_for_display(p, true), true))
+        .chain(
+            app.selection
+                .iter_invalid()
+                .map(|p| (app.format_path_for_display(p, false), false)),
+        )
+        .collect();
+
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    paths
+}
+
 fn render_legend(frame: &mut Frame, area: Rect) {
     let key_style = Style::default()
         .fg(Color::Black)
@@ -242,26 +251,23 @@ fn render_legend(frame: &mut Frame, area: Rect) {
     let desc_style = Style::default().fg(Color::Gray);
     let sep_style = Style::default().fg(Color::DarkGray);
 
-    let legend = Line::from(vec![
-        Span::styled(" Tab ", key_style),
-        Span::styled(" pane ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" Space ", key_style),
-        Span::styled(" sel ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" a ", key_style),
-        Span::styled(" all ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" r ", key_style),
-        Span::styled(" rec ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" Enter ", key_style),
-        Span::styled(" ok ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" q ", key_style),
-        Span::styled(" quit ", desc_style),
-    ]);
+    let bindings = [
+        ("Tab", "pane"),
+        ("Space", "sel"),
+        ("a", "all"),
+        ("r", "rec"),
+        ("Enter", "ok"),
+        ("q", "quit"),
+    ];
 
-    let paragraph = Paragraph::new(legend);
-    frame.render_widget(paragraph, area);
+    let mut spans = Vec::new();
+    for (i, (key, desc)) in bindings.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("│", sep_style));
+        }
+        spans.push(Span::styled(format!(" {} ", key), key_style));
+        spans.push(Span::styled(format!(" {} ", desc), desc_style));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

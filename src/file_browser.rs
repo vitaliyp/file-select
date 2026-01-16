@@ -1,5 +1,7 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use color_eyre::Result;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -10,11 +12,8 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    pub fn new(path: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string());
+    pub fn from_path(path: PathBuf) -> Self {
+        let name = extract_name(&path);
         let is_dir = path.is_dir();
         Self {
             path,
@@ -24,11 +23,8 @@ impl FileEntry {
         }
     }
 
-    pub fn new_invalid(path: PathBuf) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string());
+    pub fn invalid(path: PathBuf) -> Self {
+        let name = extract_name(&path);
         Self {
             path,
             name,
@@ -36,18 +32,33 @@ impl FileEntry {
             is_invalid: true,
         }
     }
+
+    fn sort_key(&self) -> (u8, u8, String) {
+        // Order: valid dirs, valid files, invalid entries
+        // Within each group: alphabetically by lowercase name
+        let invalid_order = if self.is_invalid { 1 } else { 0 };
+        let dir_order = if self.is_dir { 0 } else { 1 };
+        (invalid_order, dir_order, self.name.to_lowercase())
+    }
 }
 
+fn extract_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+#[derive(Debug)]
 pub struct BrowserState {
     pub current_dir: PathBuf,
     pub entries: Vec<FileEntry>,
     pub cursor: usize,
     pub show_hidden: bool,
-    pub invalid_paths: Vec<PathBuf>,
+    invalid_paths: Vec<PathBuf>,
 }
 
 impl BrowserState {
-    pub fn new(start_dir: PathBuf, show_hidden: bool) -> color_eyre::Result<Self> {
+    pub fn new(start_dir: PathBuf, show_hidden: bool) -> Result<Self> {
         let current_dir = start_dir.canonicalize()?;
         let mut state = Self {
             current_dir,
@@ -64,62 +75,61 @@ impl BrowserState {
         self.invalid_paths = paths;
     }
 
-    pub fn refresh(&mut self) -> color_eyre::Result<()> {
-        self.entries = read_directory(&self.current_dir, self.show_hidden)?;
-
-        // Add invalid paths that belong to the current directory
-        for invalid_path in &self.invalid_paths {
-            let full_path = if invalid_path.is_absolute() {
-                invalid_path.clone()
-            } else {
-                self.current_dir.join(invalid_path)
-            };
-
-            if let Some(parent) = full_path.parent() {
-                let parent_matches = parent == self.current_dir
-                    || parent.canonicalize().ok().as_ref() == Some(&self.current_dir);
-
-                if parent_matches {
-                    // Check if it's not already in entries (shouldn't be, since it's invalid)
-                    let name = full_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-
-                    if !self.entries.iter().any(|e| e.name == name) {
-                        self.entries.push(FileEntry::new_invalid(invalid_path.clone()));
-                    }
-                }
-            }
-        }
-
-        // Re-sort entries
-        self.entries.sort_by(|a, b| {
-            // Invalid files go at the end
-            match (a.is_invalid, b.is_invalid) {
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
-                _ => {
-                    // Then directories first, then alphabetically
-                    match (a.is_dir, b.is_dir) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                    }
-                }
-            }
-        });
-
-        if self.cursor >= self.entries.len() {
-            self.cursor = self.entries.len().saturating_sub(1);
-        }
+    pub fn refresh(&mut self) -> Result<()> {
+        self.entries = self.read_current_directory()?;
+        self.add_invalid_entries();
+        self.entries.sort_by_key(|e| e.sort_key());
+        self.clamp_cursor();
         Ok(())
     }
 
-    pub fn move_up(&mut self) {
-        if self.cursor > 0 {
-            self.cursor -= 1;
+    fn read_current_directory(&self) -> Result<Vec<FileEntry>> {
+        let entries = fs::read_dir(&self.current_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| FileEntry::from_path(e.path()))
+            .filter(|e| self.show_hidden || !e.name.starts_with('.'))
+            .collect();
+        Ok(entries)
+    }
+
+    fn add_invalid_entries(&mut self) {
+        for invalid_path in &self.invalid_paths {
+            if self.should_show_invalid_entry(invalid_path) {
+                self.entries.push(FileEntry::invalid(invalid_path.clone()));
+            }
         }
+    }
+
+    fn should_show_invalid_entry(&self, path: &Path) -> bool {
+        let full_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.current_dir.join(path)
+        };
+
+        let Some(parent) = full_path.parent() else {
+            return false;
+        };
+
+        let parent_matches = parent == self.current_dir
+            || parent.canonicalize().ok().as_ref() == Some(&self.current_dir);
+
+        if !parent_matches {
+            return false;
+        }
+
+        let name = extract_name(&full_path);
+        !self.entries.iter().any(|e| e.name == name)
+    }
+
+    fn clamp_cursor(&mut self) {
+        if self.cursor >= self.entries.len() {
+            self.cursor = self.entries.len().saturating_sub(1);
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
     }
 
     pub fn move_down(&mut self) {
@@ -128,35 +138,40 @@ impl BrowserState {
         }
     }
 
-    pub fn enter_directory(&mut self) -> color_eyre::Result<bool> {
-        if let Some(entry) = self.entries.get(self.cursor) {
-            if entry.is_dir {
-                self.current_dir = entry.path.clone();
-                self.cursor = 0;
-                self.refresh()?;
-                return Ok(true);
-            }
+    pub fn enter_directory(&mut self) -> Result<bool> {
+        let Some(entry) = self.entries.get(self.cursor) else {
+            return Ok(false);
+        };
+
+        if !entry.is_dir {
+            return Ok(false);
         }
-        Ok(false)
+
+        self.current_dir = entry.path.clone();
+        self.cursor = 0;
+        self.refresh()?;
+        Ok(true)
     }
 
-    pub fn go_parent(&mut self) -> color_eyre::Result<bool> {
-        if let Some(parent) = self.current_dir.parent() {
-            let old_dir = self.current_dir.clone();
-            self.current_dir = parent.to_path_buf();
-            self.refresh()?;
-            // Try to position cursor on the directory we came from
-            if let Some(pos) = self.entries.iter().position(|e| e.path == old_dir) {
-                self.cursor = pos;
-            } else {
-                self.cursor = 0;
-            }
-            return Ok(true);
-        }
-        Ok(false)
+    pub fn go_parent(&mut self) -> Result<bool> {
+        let Some(parent) = self.current_dir.parent() else {
+            return Ok(false);
+        };
+
+        let old_dir = self.current_dir.clone();
+        self.current_dir = parent.to_path_buf();
+        self.refresh()?;
+
+        self.cursor = self
+            .entries
+            .iter()
+            .position(|e| e.path == old_dir)
+            .unwrap_or(0);
+
+        Ok(true)
     }
 
-    pub fn toggle_hidden(&mut self) -> color_eyre::Result<()> {
+    pub fn toggle_hidden(&mut self) -> Result<()> {
         self.show_hidden = !self.show_hidden;
         self.refresh()
     }
@@ -164,23 +179,4 @@ impl BrowserState {
     pub fn current_entry(&self) -> Option<&FileEntry> {
         self.entries.get(self.cursor)
     }
-}
-
-fn read_directory(path: &PathBuf, show_hidden: bool) -> color_eyre::Result<Vec<FileEntry>> {
-    let mut entries: Vec<FileEntry> = fs::read_dir(path)?
-        .filter_map(|e| e.ok())
-        .map(|e| FileEntry::new(e.path()))
-        .filter(|e| show_hidden || !e.name.starts_with('.'))
-        .collect();
-
-    // Sort: directories first, then alphabetically by name (case-insensitive)
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
-    });
-
-    Ok(entries)
 }

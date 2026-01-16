@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, FocusedPane};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -42,7 +42,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_main_panels(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
     render_file_list(frame, app, chunks[0]);
@@ -106,7 +106,18 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Files"));
+    let border_style = if app.focused_pane == FocusedPane::Files {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Files")
+            .border_style(border_style),
+    );
 
     frame.render_widget(list, area);
 }
@@ -178,19 +189,47 @@ fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
     all_paths.extend(invalid_paths);
     all_paths.sort_by(|a, b| a.0.cmp(&b.0));
 
+    let is_focused = app.focused_pane == FocusedPane::Selected;
+
     let items: Vec<ListItem> = all_paths
         .into_iter()
-        .map(|(p, is_valid)| {
-            let style = if is_valid {
+        .enumerate()
+        .map(|(i, (p, is_valid))| {
+            let is_cursor = is_focused && i == app.selected_cursor;
+            let cursor = if is_cursor { "> " } else { "  " };
+
+            let style = if is_cursor {
+                if is_valid {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD)
+                }
+            } else if is_valid {
                 Style::default()
             } else {
                 Style::default().fg(Color::Red)
             };
-            ListItem::new(Line::from(Span::styled(format!(" {}", p), style)))
+
+            ListItem::new(Line::from(Span::styled(format!("{}{}", cursor, p), style)))
         })
         .collect();
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(border_style),
+    );
 
     frame.render_widget(list, area);
 }
@@ -204,6 +243,9 @@ fn render_legend(frame: &mut Frame, area: Rect) {
     let sep_style = Style::default().fg(Color::DarkGray);
 
     let legend = Line::from(vec![
+        Span::styled(" Tab ", key_style),
+        Span::styled(" pane ", desc_style),
+        Span::styled("│", sep_style),
         Span::styled(" Space ", key_style),
         Span::styled(" sel ", desc_style),
         Span::styled("│", sep_style),
@@ -211,13 +253,10 @@ fn render_legend(frame: &mut Frame, area: Rect) {
         Span::styled(" all ", desc_style),
         Span::styled("│", sep_style),
         Span::styled(" r ", key_style),
-        Span::styled(" recursive ", desc_style),
+        Span::styled(" rec ", desc_style),
         Span::styled("│", sep_style),
         Span::styled(" Enter ", key_style),
-        Span::styled(" confirm ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" . ", key_style),
-        Span::styled(" hidden ", desc_style),
+        Span::styled(" ok ", desc_style),
         Span::styled("│", sep_style),
         Span::styled(" q ", key_style),
         Span::styled(" quit ", desc_style),

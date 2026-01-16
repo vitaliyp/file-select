@@ -11,11 +11,19 @@ pub enum AppAction {
     Confirm,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum FocusedPane {
+    Files,
+    Selected,
+}
+
 pub struct App {
     pub browser: BrowserState,
     pub selection: SelectionState,
     pub use_absolute: bool,
     pub base_dir: PathBuf,
+    pub focused_pane: FocusedPane,
+    pub selected_cursor: usize,
 }
 
 impl App {
@@ -40,7 +48,49 @@ impl App {
             selection,
             use_absolute,
             base_dir,
+            focused_pane: FocusedPane::Files,
+            selected_cursor: 0,
         })
+    }
+
+    /// Get sorted list of selected paths for display
+    pub fn get_selected_list(&self) -> Vec<(PathBuf, bool)> {
+        let mut items: Vec<(PathBuf, bool)> = self
+            .selection
+            .iter_valid()
+            .map(|p| (p.clone(), true))
+            .chain(self.selection.iter_invalid().map(|p| (p.clone(), false)))
+            .collect();
+        items.sort_by(|a, b| {
+            let a_display = self.path_display(&a.0, a.1);
+            let b_display = self.path_display(&b.0, b.1);
+            a_display.cmp(&b_display)
+        });
+        items
+    }
+
+    fn path_display(&self, path: &PathBuf, is_valid: bool) -> String {
+        if is_valid {
+            path.strip_prefix(&self.base_dir)
+                .map(|rel| format!("./{}", rel.display()))
+                .unwrap_or_else(|_| path.display().to_string())
+        } else {
+            let s = path.to_string_lossy();
+            if s.starts_with("./") || s.starts_with('/') {
+                s.to_string()
+            } else {
+                format!("./{}", s)
+            }
+        }
+    }
+
+    fn clamp_selected_cursor(&mut self) {
+        let count = self.selection.count();
+        if count == 0 {
+            self.selected_cursor = 0;
+        } else if self.selected_cursor >= count {
+            self.selected_cursor = count - 1;
+        }
     }
 
     fn sync_invalid_paths(&mut self) -> color_eyre::Result<()> {
@@ -118,52 +168,101 @@ impl App {
             // Confirm and exit with output
             KeyCode::Enter => Ok(AppAction::Confirm),
 
+            // Switch panes
+            KeyCode::Tab => {
+                self.focused_pane = match self.focused_pane {
+                    FocusedPane::Files => FocusedPane::Selected,
+                    FocusedPane::Selected => FocusedPane::Files,
+                };
+                self.clamp_selected_cursor();
+                Ok(AppAction::Continue)
+            }
+
             // Move up
             KeyCode::Char('k') | KeyCode::Up => {
-                self.browser.move_up();
-                Ok(AppAction::Continue)
-            }
-
-            // Move down
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.browser.move_down();
-                Ok(AppAction::Continue)
-            }
-
-            // Go to parent directory
-            KeyCode::Char('h') | KeyCode::Left => {
-                let _ = self.browser.go_parent();
-                Ok(AppAction::Continue)
-            }
-
-            // Enter directory
-            KeyCode::Char('l') | KeyCode::Right => {
-                let _ = self.browser.enter_directory();
-                Ok(AppAction::Continue)
-            }
-
-            // Toggle selection
-            KeyCode::Char(' ') => {
-                if let Some(entry) = self.browser.current_entry().cloned() {
-                    if entry.is_invalid {
-                        self.selection.toggle_invalid(&entry.path);
-                        self.sync_invalid_paths()?;
-                    } else {
-                        self.selection.toggle(&entry.path);
+                match self.focused_pane {
+                    FocusedPane::Files => self.browser.move_up(),
+                    FocusedPane::Selected => {
+                        if self.selected_cursor > 0 {
+                            self.selected_cursor -= 1;
+                        }
                     }
                 }
                 Ok(AppAction::Continue)
             }
 
-            // Toggle recursive select (for directories)
-            KeyCode::Char('r') => {
-                self.toggle_recursive();
+            // Move down
+            KeyCode::Char('j') | KeyCode::Down => {
+                match self.focused_pane {
+                    FocusedPane::Files => self.browser.move_down(),
+                    FocusedPane::Selected => {
+                        let count = self.selection.count();
+                        if count > 0 && self.selected_cursor + 1 < count {
+                            self.selected_cursor += 1;
+                        }
+                    }
+                }
                 Ok(AppAction::Continue)
             }
 
-            // Toggle all in current directory
+            // Go to parent directory (files pane only)
+            KeyCode::Char('h') | KeyCode::Left => {
+                if self.focused_pane == FocusedPane::Files {
+                    let _ = self.browser.go_parent();
+                }
+                Ok(AppAction::Continue)
+            }
+
+            // Enter directory (files pane only)
+            KeyCode::Char('l') | KeyCode::Right => {
+                if self.focused_pane == FocusedPane::Files {
+                    let _ = self.browser.enter_directory();
+                }
+                Ok(AppAction::Continue)
+            }
+
+            // Toggle selection / Deselect in selected pane
+            KeyCode::Char(' ') => {
+                match self.focused_pane {
+                    FocusedPane::Files => {
+                        if let Some(entry) = self.browser.current_entry().cloned() {
+                            if entry.is_invalid {
+                                self.selection.toggle_invalid(&entry.path);
+                                self.sync_invalid_paths()?;
+                            } else {
+                                self.selection.toggle(&entry.path);
+                            }
+                        }
+                    }
+                    FocusedPane::Selected => {
+                        let items = self.get_selected_list();
+                        if let Some((path, is_valid)) = items.get(self.selected_cursor).cloned() {
+                            if is_valid {
+                                self.selection.remove_paths(&[path]);
+                            } else {
+                                self.selection.toggle_invalid(&path);
+                                self.sync_invalid_paths()?;
+                            }
+                            self.clamp_selected_cursor();
+                        }
+                    }
+                }
+                Ok(AppAction::Continue)
+            }
+
+            // Toggle recursive select (for directories, files pane only)
+            KeyCode::Char('r') => {
+                if self.focused_pane == FocusedPane::Files {
+                    self.toggle_recursive();
+                }
+                Ok(AppAction::Continue)
+            }
+
+            // Toggle all in current directory (files pane only)
             KeyCode::Char('a') => {
-                self.toggle_all_in_current();
+                if self.focused_pane == FocusedPane::Files {
+                    self.toggle_all_in_current();
+                }
                 Ok(AppAction::Continue)
             }
 

@@ -5,8 +5,8 @@ mod input;
 mod selection;
 mod ui;
 
-use std::fs::File;
-use std::io::{self, IsTerminal};
+use std::fs::{self, File};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
@@ -31,9 +31,17 @@ fn main() -> Result<()> {
     // Parse CLI arguments
     let config = Config::parse();
 
-    // Combine pre-selected paths from CLI args and stdin
+    // Read from selections file if specified
+    let file_paths: Vec<PathBuf> = if let Some(ref file_path) = config.selections_file {
+        read_selections_file(file_path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Combine pre-selected paths from CLI args, stdin, and file
     let mut pre_selected: Vec<PathBuf> = config.files.clone();
     pre_selected.extend(stdin_paths);
+    pre_selected.extend(file_paths);
 
     // Get starting directory
     let start_dir = std::env::current_dir()?;
@@ -74,9 +82,16 @@ fn main() -> Result<()> {
     // Handle result
     match result {
         Ok(true) => {
-            // User confirmed - output selected paths to stdout
-            for path in app.get_output() {
-                println!("{}", path);
+            // User confirmed - output selected paths
+            let output = app.get_output();
+            if let Some(ref file_path) = config.selections_file {
+                // Write to selections file
+                write_selections_file(file_path, &output)?;
+            } else {
+                // Output to stdout
+                for path in output {
+                    println!("{}", path);
+                }
             }
         }
         Ok(false) => {
@@ -88,6 +103,30 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn read_selections_file(path: &PathBuf) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let file = fs::File::open(path)?;
+    let reader = io::BufReader::new(file);
+    let paths = reader
+        .lines()
+        .filter_map(|line| line.ok())
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    Ok(paths)
+}
+
+fn write_selections_file(path: &PathBuf, paths: &[String]) -> Result<()> {
+    let mut file = fs::File::create(path)?;
+    for p in paths {
+        writeln!(file, "{}", p)?;
+    }
     Ok(())
 }
 

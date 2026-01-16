@@ -1,2 +1,10 @@
+./Cargo.toml
 ./asdf
+./src/app.rs
+./src/config.rs
+./src/file_browser.rs
+./src/input.rs
+./src/main.rs
+./src/selection.rs
+./src/ui.rs
 ./test.txt

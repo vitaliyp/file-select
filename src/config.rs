@@ -17,6 +17,10 @@ pub struct Config {
     #[arg(short = 'H', long = "hidden")]
     pub show_hidden: bool,
 
+    /// Selections file to read from and write to
+    #[arg(short = 'f', long = "file")]
+    pub selections_file: Option<PathBuf>,
+
     /// Pre-selected files
     #[arg(value_name = "FILES")]
     pub files: Vec<PathBuf>,

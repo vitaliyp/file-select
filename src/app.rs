@@ -53,7 +53,7 @@ impl App {
         selection.add_paths(pre_selected);
 
         let invalid_paths: Vec<PathBuf> = selection.iter_invalid().cloned().collect();
-        browser.set_invalid_paths(invalid_paths);
+        browser.add_invalid_paths(invalid_paths);
         browser.refresh()?;
 
         Ok(Self {
@@ -96,7 +96,7 @@ impl App {
                 Ok(AppAction::Continue)
             }
             KeyCode::Char(' ') => {
-                self.handle_space()?;
+                self.handle_space();
                 Ok(AppAction::Continue)
             }
             KeyCode::Char('r') => {
@@ -140,42 +140,39 @@ impl App {
         }
     }
 
-    fn handle_space(&mut self) -> Result<()> {
+    fn handle_space(&mut self) {
         match self.focused_pane {
-            FocusedPane::Files => self.toggle_current_entry()?,
-            FocusedPane::Selected => self.deselect_at_cursor()?,
+            FocusedPane::Files => self.toggle_current_entry(),
+            FocusedPane::Selected => self.deselect_at_cursor(),
         }
-        Ok(())
     }
 
-    fn toggle_current_entry(&mut self) -> Result<()> {
+    fn toggle_current_entry(&mut self) {
         let Some(entry) = self.browser.current_entry().cloned() else {
-            return Ok(());
+            return;
         };
 
         if entry.is_invalid {
+            // Invalid file is already in browser, just toggle selection state
             self.selection.toggle_invalid(&entry.path);
-            self.sync_invalid_paths()?;
         } else {
             self.selection.toggle(&entry.path);
         }
-        Ok(())
     }
 
-    fn deselect_at_cursor(&mut self) -> Result<()> {
+    fn deselect_at_cursor(&mut self) {
         let items = self.get_selected_list();
         let Some((path, is_valid)) = items.get(self.selected_cursor).cloned() else {
-            return Ok(());
+            return;
         };
 
         if is_valid {
             self.selection.remove_paths(&[path]);
         } else {
+            // Invalid file stays in browser, just deselect it
             self.selection.toggle_invalid(&path);
-            self.sync_invalid_paths()?;
         }
         self.clamp_selected_cursor();
-        Ok(())
     }
 
     fn toggle_recursive(&mut self) {
@@ -255,12 +252,6 @@ impl App {
         } else if self.selected_cursor >= count {
             self.selected_cursor = count - 1;
         }
-    }
-
-    fn sync_invalid_paths(&mut self) -> Result<()> {
-        let invalid_paths: Vec<PathBuf> = self.selection.iter_invalid().cloned().collect();
-        self.browser.set_invalid_paths(invalid_paths);
-        self.browser.refresh()
     }
 
     /// Get sorted list of selected paths for display

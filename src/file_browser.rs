@@ -70,8 +70,12 @@ impl BrowserState {
         Ok(state)
     }
 
-    pub fn set_invalid_paths(&mut self, paths: Vec<PathBuf>) {
-        self.invalid_paths = paths;
+    pub fn add_invalid_paths(&mut self, paths: Vec<PathBuf>) {
+        for path in paths {
+            if !self.invalid_paths.contains(&path) {
+                self.invalid_paths.push(path);
+            }
+        }
     }
 
     pub fn refresh(&mut self) -> Result<()> {

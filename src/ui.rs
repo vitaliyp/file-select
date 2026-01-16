@@ -62,8 +62,15 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
                 app.selection.is_selected(&entry.path)
             };
             let checkbox = if is_selected { "[x]" } else { "[ ]" };
+
+            // For directories, count selected files inside
             let name = if entry.is_dir {
-                format!("{}/", entry.name)
+                let count = count_selected_in_dir(&entry.path, app);
+                if count > 0 {
+                    format!("{}/ ({})", entry.name, count)
+                } else {
+                    format!("{}/", entry.name)
+                }
             } else {
                 entry.name.clone()
             };
@@ -102,6 +109,37 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Files"));
 
     frame.render_widget(list, area);
+}
+
+/// Count how many selected files are inside a directory (including subdirectories)
+fn count_selected_in_dir(dir_path: &std::path::PathBuf, app: &App) -> usize {
+    let dir_canonical = match dir_path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return 0,
+    };
+
+    // Count valid selected paths that start with this directory
+    let valid_count = app
+        .selection
+        .iter_valid()
+        .filter(|p| p.starts_with(&dir_canonical))
+        .count();
+
+    // Count invalid selected paths that would be in this directory
+    let invalid_count = app
+        .selection
+        .iter_invalid()
+        .filter(|p| {
+            let full_path = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                app.base_dir.join(p)
+            };
+            full_path.starts_with(&dir_canonical)
+        })
+        .count();
+
+    valid_count + invalid_count
 }
 
 fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {

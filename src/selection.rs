@@ -13,15 +13,9 @@ impl SelectionState {
     }
 
     pub fn add_paths(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
-        let debug = std::env::var("DEBUG").is_ok();
         for path in paths {
             if let Ok(canonical) = path.canonicalize() {
-                if debug {
-                    eprintln!("[DEBUG] Selected: {:?}", canonical);
-                }
                 self.selected.insert(canonical);
-            } else if debug {
-                eprintln!("[DEBUG] Failed to canonicalize: {:?}", path);
             }
         }
     }

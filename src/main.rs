@@ -6,7 +6,7 @@ mod selection;
 mod ui;
 
 use std::fs::File;
-use std::io::{self, IsTerminal, Stdout};
+use std::io::{self, IsTerminal};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
@@ -46,27 +46,22 @@ fn main() -> Result<()> {
         pre_selected,
     )?;
 
-    // If stdin was piped, we need to reopen /dev/tty for keyboard input
-    let tty_fd = if !io::stdin().is_terminal() {
-        let tty = File::open("/dev/tty")?;
-        Some(tty)
-    } else {
-        None
-    };
+    // Open /dev/tty for TUI output and keyboard input
+    // This keeps stdout clean for piping selected paths
+    let mut tty = File::options().read(true).write(true).open("/dev/tty")?;
 
-    // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // If we opened /dev/tty, redirect stdin to it
-    if let Some(tty) = tty_fd {
+    // Redirect stdin to /dev/tty for keyboard input if it was piped
+    if !io::stdin().is_terminal() {
         unsafe {
             libc::dup2(tty.as_raw_fd(), 0);
         }
     }
+
+    // Setup terminal - write TUI to /dev/tty, not stdout
+    enable_raw_mode()?;
+    execute!(tty, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(tty);
+    let mut terminal = Terminal::new(backend)?;
 
     // Run the main loop
     let result = run_app(&mut terminal, &mut app);
@@ -79,7 +74,7 @@ fn main() -> Result<()> {
     // Handle result
     match result {
         Ok(true) => {
-            // User confirmed - output selected paths
+            // User confirmed - output selected paths to stdout
             for path in app.get_output() {
                 println!("{}", path);
             }
@@ -97,7 +92,7 @@ fn main() -> Result<()> {
 }
 
 fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    terminal: &mut Terminal<CrosstermBackend<File>>,
     app: &mut App,
 ) -> Result<bool> {
     loop {

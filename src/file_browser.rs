@@ -23,21 +23,18 @@ impl FileEntry {
         }
     }
 
-    pub fn invalid(path: PathBuf) -> Self {
-        let name = extract_name(&path);
+    pub fn invalid(path: PathBuf, display_name: String) -> Self {
         Self {
             path,
-            name,
+            name: display_name,
             is_dir: false,
             is_invalid: true,
         }
     }
 
     fn sort_key(&self) -> (u8, u8, String) {
-        // Order: valid dirs, valid files, invalid entries
-        // Within each group: alphabetically by lowercase name
-        let invalid_order = if self.is_invalid { 1 } else { 0 };
-        let dir_order = if self.is_dir { 0 } else { 1 };
+        let invalid_order = u8::from(self.is_invalid);
+        let dir_order = u8::from(!self.is_dir);
         (invalid_order, dir_order, self.name.to_lowercase())
     }
 }
@@ -54,6 +51,7 @@ pub struct BrowserState {
     pub entries: Vec<FileEntry>,
     pub cursor: usize,
     pub show_hidden: bool,
+    base_dir: PathBuf,
     invalid_paths: Vec<PathBuf>,
 }
 
@@ -61,6 +59,7 @@ impl BrowserState {
     pub fn new(start_dir: PathBuf, show_hidden: bool) -> Result<Self> {
         let current_dir = start_dir.canonicalize()?;
         let mut state = Self {
+            base_dir: current_dir.clone(),
             current_dir,
             entries: Vec::new(),
             cursor: 0,
@@ -93,33 +92,70 @@ impl BrowserState {
     }
 
     fn add_invalid_entries(&mut self) {
-        for invalid_path in &self.invalid_paths {
-            if self.should_show_invalid_entry(invalid_path) {
-                self.entries.push(FileEntry::invalid(invalid_path.clone()));
+        let entries_to_add: Vec<_> = self
+            .invalid_paths
+            .iter()
+            .filter_map(|path| self.resolve_invalid_for_current_dir(path))
+            .collect();
+
+        for (path, display_name) in entries_to_add {
+            if !self.entries.iter().any(|e| e.name == display_name) {
+                self.entries.push(FileEntry::invalid(path, display_name));
             }
         }
     }
 
-    fn should_show_invalid_entry(&self, path: &Path) -> bool {
+    /// For an invalid path, determine if it should be shown in current_dir.
+    /// Returns Some((original_path, display_name)) if it should be shown here.
+    fn resolve_invalid_for_current_dir(&self, path: &Path) -> Option<(PathBuf, String)> {
+        let (display_dir, display_name) = self.find_display_location(path)?;
+
+        if display_dir == self.current_dir {
+            Some((path.to_path_buf(), display_name))
+        } else {
+            None
+        }
+    }
+
+    /// Find where an invalid path should be displayed.
+    /// Returns (directory_to_show_in, name_to_display).
+    fn find_display_location(&self, path: &Path) -> Option<(PathBuf, String)> {
+        // Make path absolute relative to base_dir
         let full_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.current_dir.join(path)
+            self.base_dir.join(path)
         };
 
-        let Some(parent) = full_path.parent() else {
-            return false;
-        };
+        // Get path relative to base_dir
+        let relative = full_path.strip_prefix(&self.base_dir).ok()?;
+        let components: Vec<_> = relative.components().collect();
 
-        let parent_matches = parent == self.current_dir
-            || parent.canonicalize().ok().as_ref() == Some(&self.current_dir);
-
-        if !parent_matches {
-            return false;
+        if components.is_empty() {
+            return None;
         }
 
-        let name = extract_name(&full_path);
-        !self.entries.iter().any(|e| e.name == name)
+        // Walk from base_dir, find where the path becomes invalid
+        let mut current = self.base_dir.clone();
+
+        for (i, component) in components.iter().enumerate() {
+            let next = current.join(component);
+
+            if !next.exists() {
+                // This component doesn't exist
+                // current is the display directory
+                // remaining components form the display name
+                let remaining: PathBuf = components[i..].iter().collect();
+                let display_name = remaining.to_string_lossy().into_owned();
+                let display_dir = current.canonicalize().unwrap_or(current);
+                return Some((display_dir, display_name));
+            }
+
+            current = next;
+        }
+
+        // Path actually exists - shouldn't happen for invalid paths
+        None
     }
 
     fn clamp_cursor(&mut self) {

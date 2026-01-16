@@ -1,5 +1,6 @@
 ./Cargo.toml
 ./asdf
+./target/asdf/qwer
 ./src/app.rs
 ./src/config.rs
 ./src/file_browser.rs

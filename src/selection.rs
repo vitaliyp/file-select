@@ -27,6 +27,14 @@ impl SelectionState {
         }
     }
 
+    pub fn remove_paths(&mut self, paths: &[PathBuf]) {
+        for path in paths {
+            if let Ok(canonical) = path.canonicalize() {
+                self.selected.remove(&canonical);
+            }
+        }
+    }
+
     pub fn toggle(&mut self, path: &PathBuf) {
         if let Ok(canonical) = path.canonicalize() {
             if self.selected.contains(&canonical) {

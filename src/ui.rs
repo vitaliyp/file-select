@@ -204,14 +204,14 @@ fn render_legend(frame: &mut Frame, area: Rect) {
     let sep_style = Style::default().fg(Color::DarkGray);
 
     let legend = Line::from(vec![
-        Span::styled(" j/k ", key_style),
-        Span::styled(" up/down ", desc_style),
-        Span::styled("│", sep_style),
-        Span::styled(" h/l ", key_style),
-        Span::styled(" nav ", desc_style),
-        Span::styled("│", sep_style),
         Span::styled(" Space ", key_style),
-        Span::styled(" select ", desc_style),
+        Span::styled(" sel ", desc_style),
+        Span::styled("│", sep_style),
+        Span::styled(" a ", key_style),
+        Span::styled(" all ", desc_style),
+        Span::styled("│", sep_style),
+        Span::styled(" r ", key_style),
+        Span::styled(" recursive ", desc_style),
         Span::styled("│", sep_style),
         Span::styled(" Enter ", key_style),
         Span::styled(" confirm ", desc_style),

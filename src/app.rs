@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use std::fs;
 use std::path::PathBuf;
 
 use crate::file_browser::BrowserState;
@@ -48,6 +49,67 @@ impl App {
         self.browser.refresh()
     }
 
+    /// Recursively collect all files in a directory
+    fn collect_files_recursive(&self, dir: &PathBuf) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Recurse into subdirectory
+                    files.extend(self.collect_files_recursive(&path));
+                } else {
+                    // Check hidden file filter
+                    let name = path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if self.browser.show_hidden || !name.starts_with('.') {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+        files
+    }
+
+    /// Toggle all files recursively in the current entry (if it's a directory)
+    fn toggle_recursive(&mut self) {
+        if let Some(entry) = self.browser.current_entry().cloned() {
+            if entry.is_dir && !entry.is_invalid {
+                let files = self.collect_files_recursive(&entry.path);
+                if files.is_empty() {
+                    return;
+                }
+                // Check if all files are already selected
+                let all_selected = files.iter().all(|f| self.selection.is_selected(f));
+                if all_selected {
+                    self.selection.remove_paths(&files);
+                } else {
+                    self.selection.add_paths(files);
+                }
+            }
+        }
+    }
+
+    /// Toggle all entries in the current directory
+    fn toggle_all_in_current(&mut self) {
+        let paths: Vec<PathBuf> = self.browser.entries
+            .iter()
+            .filter(|e| !e.is_invalid)
+            .map(|e| e.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        // Check if all are already selected
+        let all_selected = paths.iter().all(|p| self.selection.is_selected(p));
+        if all_selected {
+            self.selection.remove_paths(&paths);
+        } else {
+            self.selection.add_paths(paths);
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> color_eyre::Result<AppAction> {
         match key.code {
             // Quit without output
@@ -90,6 +152,18 @@ impl App {
                         self.selection.toggle(&entry.path);
                     }
                 }
+                Ok(AppAction::Continue)
+            }
+
+            // Toggle recursive select (for directories)
+            KeyCode::Char('r') => {
+                self.toggle_recursive();
+                Ok(AppAction::Continue)
+            }
+
+            // Toggle all in current directory
+            KeyCode::Char('a') => {
+                self.toggle_all_in_current();
                 Ok(AppAction::Continue)
             }
 

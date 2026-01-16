@@ -6,6 +6,7 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
+    pub is_invalid: bool,
 }
 
 impl FileEntry {
@@ -15,7 +16,25 @@ impl FileEntry {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string_lossy().to_string());
         let is_dir = path.is_dir();
-        Self { path, name, is_dir }
+        Self {
+            path,
+            name,
+            is_dir,
+            is_invalid: false,
+        }
+    }
+
+    pub fn new_invalid(path: PathBuf) -> Self {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        Self {
+            path,
+            name,
+            is_dir: false,
+            is_invalid: true,
+        }
     }
 }
 
@@ -24,6 +43,7 @@ pub struct BrowserState {
     pub entries: Vec<FileEntry>,
     pub cursor: usize,
     pub show_hidden: bool,
+    pub invalid_paths: Vec<PathBuf>,
 }
 
 impl BrowserState {
@@ -34,13 +54,62 @@ impl BrowserState {
             entries: Vec::new(),
             cursor: 0,
             show_hidden,
+            invalid_paths: Vec::new(),
         };
         state.refresh()?;
         Ok(state)
     }
 
+    pub fn set_invalid_paths(&mut self, paths: Vec<PathBuf>) {
+        self.invalid_paths = paths;
+    }
+
     pub fn refresh(&mut self) -> color_eyre::Result<()> {
         self.entries = read_directory(&self.current_dir, self.show_hidden)?;
+
+        // Add invalid paths that belong to the current directory
+        for invalid_path in &self.invalid_paths {
+            let full_path = if invalid_path.is_absolute() {
+                invalid_path.clone()
+            } else {
+                self.current_dir.join(invalid_path)
+            };
+
+            if let Some(parent) = full_path.parent() {
+                let parent_matches = parent == self.current_dir
+                    || parent.canonicalize().ok().as_ref() == Some(&self.current_dir);
+
+                if parent_matches {
+                    // Check if it's not already in entries (shouldn't be, since it's invalid)
+                    let name = full_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
+                    if !self.entries.iter().any(|e| e.name == name) {
+                        self.entries.push(FileEntry::new_invalid(invalid_path.clone()));
+                    }
+                }
+            }
+        }
+
+        // Re-sort entries
+        self.entries.sort_by(|a, b| {
+            // Invalid files go at the end
+            match (a.is_invalid, b.is_invalid) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => {
+                    // Then directories first, then alphabetically
+                    match (a.is_dir, b.is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    }
+                }
+            }
+        });
+
         if self.cursor >= self.entries.len() {
             self.cursor = self.entries.len().saturating_sub(1);
         }

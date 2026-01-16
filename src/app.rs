@@ -25,9 +25,14 @@ impl App {
         pre_selected: Vec<PathBuf>,
     ) -> color_eyre::Result<Self> {
         let base_dir = start_dir.canonicalize()?;
-        let browser = BrowserState::new(start_dir, show_hidden)?;
+        let mut browser = BrowserState::new(start_dir, show_hidden)?;
         let mut selection = SelectionState::new();
         selection.add_paths(pre_selected);
+
+        // Sync invalid paths to browser
+        let invalid_paths: Vec<PathBuf> = selection.iter_invalid().cloned().collect();
+        browser.set_invalid_paths(invalid_paths);
+        browser.refresh()?;
 
         Ok(Self {
             browser,
@@ -35,6 +40,12 @@ impl App {
             use_absolute,
             base_dir,
         })
+    }
+
+    fn sync_invalid_paths(&mut self) -> color_eyre::Result<()> {
+        let invalid_paths: Vec<PathBuf> = self.selection.iter_invalid().cloned().collect();
+        self.browser.set_invalid_paths(invalid_paths);
+        self.browser.refresh()
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> color_eyre::Result<AppAction> {
@@ -71,8 +82,13 @@ impl App {
 
             // Toggle selection
             KeyCode::Char(' ') => {
-                if let Some(entry) = self.browser.current_entry() {
-                    self.selection.toggle(&entry.path);
+                if let Some(entry) = self.browser.current_entry().cloned() {
+                    if entry.is_invalid {
+                        self.selection.toggle_invalid(&entry.path);
+                        self.sync_invalid_paths()?;
+                    } else {
+                        self.selection.toggle(&entry.path);
+                    }
                 }
                 Ok(AppAction::Continue)
             }

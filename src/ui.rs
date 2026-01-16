@@ -56,7 +56,11 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, entry)| {
-            let is_selected = app.selection.is_selected(&entry.path);
+            let is_selected = if entry.is_invalid {
+                app.selection.is_invalid_selected(&entry.path)
+            } else {
+                app.selection.is_selected(&entry.path)
+            };
             let checkbox = if is_selected { "[x]" } else { "[ ]" };
             let name = if entry.is_dir {
                 format!("{}/", entry.name)
@@ -66,7 +70,16 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
 
             let cursor = if i == app.browser.cursor { "> " } else { "  " };
 
-            let style = if i == app.browser.cursor {
+            let style = if entry.is_invalid {
+                // Invalid files are always red
+                if i == app.browser.cursor {
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Red)
+                }
+            } else if i == app.browser.cursor {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -94,20 +107,49 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
 fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
     let title = format!("Selected ({})", app.selection.count());
 
-    let mut paths: Vec<String> = app
+    // Collect valid paths
+    let valid_paths: Vec<(String, bool)> = app
         .selection
-        .iter()
+        .iter_valid()
         .map(|p| {
-            p.strip_prefix(&app.base_dir)
+            let display = p
+                .strip_prefix(&app.base_dir)
                 .map(|rel| format!("./{}", rel.display()))
-                .unwrap_or_else(|_| p.display().to_string())
+                .unwrap_or_else(|_| p.display().to_string());
+            (display, true) // true = valid
         })
         .collect();
-    paths.sort();
 
-    let items: Vec<ListItem> = paths
+    // Collect invalid paths
+    let invalid_paths: Vec<(String, bool)> = app
+        .selection
+        .iter_invalid()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            let display = if s.starts_with("./") || s.starts_with('/') {
+                s.to_string()
+            } else {
+                format!("./{}", s)
+            };
+            (display, false) // false = invalid
+        })
+        .collect();
+
+    // Combine and sort
+    let mut all_paths: Vec<(String, bool)> = valid_paths;
+    all_paths.extend(invalid_paths);
+    all_paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let items: Vec<ListItem> = all_paths
         .into_iter()
-        .map(|p| ListItem::new(format!(" {}", p)))
+        .map(|(p, is_valid)| {
+            let style = if is_valid {
+                Style::default()
+            } else {
+                Style::default().fg(Color::Red)
+            };
+            ListItem::new(Line::from(Span::styled(format!(" {}", p), style)))
+        })
         .collect();
 
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));

@@ -43,6 +43,7 @@ fn main() -> Result<()> {
         config.show_hidden,
         config.use_absolute_paths(),
         pre_selected,
+        config.selections_file.clone(),
     )?;
 
     let confirmed = run_tui(&mut app)?;
@@ -94,6 +95,12 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<File>>, app: &mut App) ->
                 AppAction::Continue => {}
                 AppAction::Quit => return Ok(false),
                 AppAction::Confirm => return Ok(true),
+                AppAction::Save => {
+                    if let Some(path) = app.selections_file() {
+                        let output = app.get_output();
+                        write_selections_file(path, &output)?;
+                    }
+                }
             }
         }
     }

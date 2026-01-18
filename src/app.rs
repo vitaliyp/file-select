@@ -12,6 +12,7 @@ pub enum AppAction {
     Continue,
     Quit,
     Confirm,
+    Save,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,6 +40,7 @@ pub struct App {
     pub selected_cursor: usize,
     pub selected_scroll_offset: usize,
     use_absolute: bool,
+    selections_file: Option<PathBuf>,
 }
 
 impl App {
@@ -47,6 +49,7 @@ impl App {
         show_hidden: bool,
         use_absolute: bool,
         pre_selected: Vec<PathBuf>,
+        selections_file: Option<PathBuf>,
     ) -> Result<Self> {
         let base_dir = start_dir.canonicalize()?;
         let mut browser = BrowserState::new(start_dir, show_hidden)?;
@@ -65,7 +68,16 @@ impl App {
             focused_pane: FocusedPane::default(),
             selected_cursor: 0,
             selected_scroll_offset: 0,
+            selections_file,
         })
+    }
+
+    pub fn can_save(&self) -> bool {
+        self.selections_file.is_some()
+    }
+
+    pub fn selections_file(&self) -> Option<&PathBuf> {
+        self.selections_file.as_ref()
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<AppAction> {
@@ -116,6 +128,13 @@ impl App {
             KeyCode::Char('.') => {
                 self.browser.toggle_hidden()?;
                 Ok(AppAction::Continue)
+            }
+            KeyCode::Char('s') => {
+                if self.can_save() {
+                    Ok(AppAction::Save)
+                } else {
+                    Ok(AppAction::Continue)
+                }
             }
             _ => Ok(AppAction::Continue),
         }

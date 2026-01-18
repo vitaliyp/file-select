@@ -64,7 +64,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     render_status_bar(frame, app, status_area);
     render_main_panels(frame, app, main_area);
-    render_legend(frame, legend_area);
+    render_legend(frame, app, legend_area);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -258,7 +258,7 @@ fn collect_display_paths(app: &App) -> Vec<(String, bool)> {
     paths
 }
 
-fn render_legend(frame: &mut Frame, area: Rect) {
+fn render_legend(frame: &mut Frame, app: &App, area: Rect) {
     let key_style = Style::default()
         .fg(Color::Black)
         .bg(Color::Gray)
@@ -266,14 +266,19 @@ fn render_legend(frame: &mut Frame, area: Rect) {
     let desc_style = Style::default().fg(Color::Gray);
     let sep_style = Style::default().fg(Color::DarkGray);
 
-    let bindings = [
+    let mut bindings = vec![
         ("Tab", "pane"),
         ("Space", "sel"),
         ("a", "all"),
         ("r", "rec"),
-        ("Enter", "ok"),
-        ("q", "quit"),
     ];
+
+    if app.can_save() {
+        bindings.push(("s", "save"));
+    }
+
+    bindings.push(("Enter", "ok"));
+    bindings.push(("q", "quit"));
 
     let mut spans = Vec::new();
     for (i, (key, desc)) in bindings.iter().enumerate() {

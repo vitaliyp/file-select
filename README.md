@@ -10,8 +10,10 @@ A TUI file selector with vim-style navigation for selecting multiple files and d
 - Select files and directories across multiple directories
 - Recursive selection for directories
 - Pre-select files via stdin or CLI arguments
-- Edit a selections file with `-f`
+- Edit a selections file with `-f` (with quick save via `s`)
+- Search files in current directory with `/`
 - Show/hide hidden files
+- Scrollable file lists with smart cursor positioning
 - Invalid paths displayed in red (for non-existent pre-selected files)
 
 ## Installation
@@ -72,10 +74,19 @@ file-list -H -a
 | `Space` | Toggle selection / Deselect in Selected pane |
 | `a` | Select/deselect all in current directory |
 | `r` | Recursively select/deselect directory contents |
+| `/` | Search files in current directory |
+| `s` | Save to file (only with `-f` option) |
 | `Tab` | Switch between Files and Selected panes |
 | `.` | Toggle hidden files |
 | `Enter` | Confirm and output selections |
 | `q` / `Esc` | Quit without output |
+
+### Search Mode
+
+When you press `/`, the status bar becomes a search input:
+- Type to search - cursor jumps to first matching file/directory
+- `Enter` - confirm and exit search mode
+- `Esc` - cancel search
 
 ## UI Layout
 
@@ -89,13 +100,15 @@ file-list -H -a
 │   [x] Cargo.toml     │   ./README.md                       │
 │   [ ] README.md      │                                     │
 └──────────────────────┴─────────────────────────────────────┘
-│ Tab pane │ Space sel │ a all │ r rec │ Enter ok │ q quit  │
+│ Tab pane│Space sel│a all│r rec│/ search│Enter ok│q quit   │
 └────────────────────────────────────────────────────────────┘
 ```
 
 - Focused pane has a cyan border
 - Directories show count of selected files inside: `src/ (5)`
 - Invalid/non-existent paths are shown in red
+- File lists scroll automatically to keep cursor visible
+- When using `-f`, the legend shows `s save` for quick saving
 
 ## License
 

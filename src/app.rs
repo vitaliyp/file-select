@@ -39,6 +39,8 @@ pub struct App {
     pub focused_pane: FocusedPane,
     pub selected_cursor: usize,
     pub selected_scroll_offset: usize,
+    pub search_mode: bool,
+    pub search_query: String,
     use_absolute: bool,
     selections_file: Option<PathBuf>,
 }
@@ -68,6 +70,8 @@ impl App {
             focused_pane: FocusedPane::default(),
             selected_cursor: 0,
             selected_scroll_offset: 0,
+            search_mode: false,
+            search_query: String::new(),
             selections_file,
         })
     }
@@ -81,6 +85,10 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<AppAction> {
+        if self.search_mode {
+            return self.handle_search_key(key);
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Ok(AppAction::Quit),
             KeyCode::Enter => Ok(AppAction::Confirm),
@@ -136,7 +144,68 @@ impl App {
                     Ok(AppAction::Continue)
                 }
             }
+            KeyCode::Char('/') => {
+                if self.focused_pane == FocusedPane::Files {
+                    self.search_mode = true;
+                    self.search_query.clear();
+                }
+                Ok(AppAction::Continue)
+            }
             _ => Ok(AppAction::Continue),
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) -> Result<AppAction> {
+        match key.code {
+            KeyCode::Esc => {
+                self.search_mode = false;
+                self.search_query.clear();
+            }
+            KeyCode::Enter => {
+                self.search_mode = false;
+                // Keep cursor on current match, don't clear query for visual feedback
+            }
+            KeyCode::Backspace => {
+                self.search_query.pop();
+                self.jump_to_match();
+            }
+            KeyCode::Char(c) => {
+                self.search_query.push(c);
+                self.jump_to_match();
+            }
+            _ => {}
+        }
+        Ok(AppAction::Continue)
+    }
+
+    fn jump_to_match(&mut self) {
+        if self.search_query.is_empty() {
+            return;
+        }
+
+        let query_lower = self.search_query.to_lowercase();
+
+        // Find first entry that starts with the query
+        if let Some(pos) = self
+            .browser
+            .entries
+            .iter()
+            .position(|e| e.name.to_lowercase().starts_with(&query_lower))
+        {
+            self.browser.cursor = pos;
+            self.browser.scroll_offset = self.browser.scroll_offset.min(pos);
+            return;
+        }
+
+        // Fall back to finding entry that contains the query
+        if let Some(pos) = self
+            .browser
+            .entries
+            .iter()
+            .position(|e| e.name.to_lowercase().contains(&query_lower))
+        {
+            self.browser.cursor = pos;
+            self.browser.scroll_offset = self.browser.scroll_offset.min(pos);
         }
     }
 

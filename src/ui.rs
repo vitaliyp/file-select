@@ -68,6 +68,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    if app.search_mode {
+        let search_text = format!("/{}", app.search_query);
+        let status = Paragraph::new(search_text).style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(status, area);
+        return;
+    }
+
     let current_dir = app
         .browser
         .current_dir
@@ -271,6 +283,7 @@ fn render_legend(frame: &mut Frame, app: &App, area: Rect) {
         ("Space", "sel"),
         ("a", "all"),
         ("r", "rec"),
+        ("/", "search"),
     ];
 
     if app.can_save() {

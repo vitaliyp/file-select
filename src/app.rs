@@ -37,6 +37,7 @@ pub struct App {
     pub base_dir: PathBuf,
     pub focused_pane: FocusedPane,
     pub selected_cursor: usize,
+    pub selected_scroll_offset: usize,
     use_absolute: bool,
 }
 
@@ -63,6 +64,7 @@ impl App {
             base_dir,
             focused_pane: FocusedPane::default(),
             selected_cursor: 0,
+            selected_scroll_offset: 0,
         })
     }
 
@@ -123,7 +125,11 @@ impl App {
         match self.focused_pane {
             FocusedPane::Files => self.browser.move_up(),
             FocusedPane::Selected => {
-                self.selected_cursor = self.selected_cursor.saturating_sub(1);
+                if self.selected_cursor > 0 {
+                    self.selected_cursor -= 1;
+                    // When moving up, keep cursor at top of visible area
+                    self.selected_scroll_offset = self.selected_scroll_offset.min(self.selected_cursor);
+                }
             }
         }
     }
@@ -137,6 +143,16 @@ impl App {
                     self.selected_cursor += 1;
                 }
             }
+        }
+    }
+
+    pub fn adjust_selected_scroll(&mut self, visible_height: usize) {
+        if visible_height == 0 {
+            return;
+        }
+        // Ensure cursor is visible at bottom when scrolling down
+        if self.selected_cursor >= self.selected_scroll_offset + visible_height {
+            self.selected_scroll_offset = self.selected_cursor - visible_height + 1;
         }
     }
 

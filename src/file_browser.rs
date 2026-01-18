@@ -50,6 +50,7 @@ pub struct BrowserState {
     pub current_dir: PathBuf,
     pub entries: Vec<FileEntry>,
     pub cursor: usize,
+    pub scroll_offset: usize,
     pub show_hidden: bool,
     base_dir: PathBuf,
     invalid_paths: Vec<PathBuf>,
@@ -63,6 +64,7 @@ impl BrowserState {
             current_dir,
             entries: Vec::new(),
             cursor: 0,
+            scroll_offset: 0,
             show_hidden,
             invalid_paths: Vec::new(),
         };
@@ -169,12 +171,28 @@ impl BrowserState {
     }
 
     pub fn move_up(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            // When moving up, keep cursor at top of visible area
+            self.scroll_offset = self.scroll_offset.min(self.cursor);
+        }
     }
 
     pub fn move_down(&mut self) {
         if self.cursor + 1 < self.entries.len() {
             self.cursor += 1;
+        }
+    }
+
+    /// Adjust scroll offset to keep cursor visible. Call this during render
+    /// when visible_height is known.
+    pub fn adjust_scroll(&mut self, visible_height: usize) {
+        if visible_height == 0 {
+            return;
+        }
+        // Ensure cursor is visible at bottom when scrolling down
+        if self.cursor >= self.scroll_offset + visible_height {
+            self.scroll_offset = self.cursor - visible_height + 1;
         }
     }
 
@@ -189,6 +207,7 @@ impl BrowserState {
 
         self.current_dir = entry.path.clone();
         self.cursor = 0;
+        self.scroll_offset = 0;
         self.refresh()?;
         Ok(true)
     }
@@ -207,6 +226,7 @@ impl BrowserState {
             .iter()
             .position(|e| e.path == old_dir)
             .unwrap_or(0);
+        self.scroll_offset = self.cursor; // Position cursor at top
 
         Ok(true)
     }

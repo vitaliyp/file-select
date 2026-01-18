@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -52,7 +52,7 @@ mod styles {
     }
 }
 
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let [status_area, main_area, legend_area] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -82,7 +82,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(status, area);
 }
 
-fn render_main_panels(frame: &mut Frame, app: &App, area: Rect) {
+fn render_main_panels(frame: &mut Frame, app: &mut App, area: Rect) {
     let [files_area, selected_area] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -92,7 +92,11 @@ fn render_main_panels(frame: &mut Frame, app: &App, area: Rect) {
     render_selection_list(frame, app, selected_area);
 }
 
-fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_file_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Calculate visible height (area minus borders)
+    let visible_height = area.height.saturating_sub(2) as usize;
+    app.browser.adjust_scroll(visible_height);
+
     let items: Vec<ListItem> = app
         .browser
         .entries
@@ -134,7 +138,10 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(border_style),
     );
 
-    frame.render_widget(list, area);
+    let mut state = ListState::default()
+        .with_selected(Some(app.browser.cursor))
+        .with_offset(app.browser.scroll_offset);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn format_entry_name(entry: &crate::file_browser::FileEntry, app: &App) -> String {
@@ -187,7 +194,11 @@ fn count_selected_in_dir(dir_path: &Path, app: &App) -> usize {
     valid_count + invalid_count
 }
 
-fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
+fn render_selection_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Calculate visible height and adjust scroll
+    let visible_height = area.height.saturating_sub(2) as usize;
+    app.adjust_selected_scroll(visible_height);
+
     let title = format!("Selected ({})", app.selection.count());
     let is_focused = app.focused_pane == FocusedPane::Selected;
 
@@ -224,7 +235,11 @@ fn render_selection_list(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(border_style),
     );
 
-    frame.render_widget(list, area);
+    let selected = if is_focused { Some(app.selected_cursor) } else { None };
+    let mut state = ListState::default()
+        .with_selected(selected)
+        .with_offset(app.selected_scroll_offset);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn collect_display_paths(app: &App) -> Vec<(String, bool)> {

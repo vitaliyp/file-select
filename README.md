@@ -2,7 +2,7 @@
 
 A TUI file selector with vim-style navigation for selecting multiple files and directories.
 
-![Rust](https://img.shields.io/badge/rust-stable-orange)
+<img width="1281" height="704" alt="image" src="https://github.com/user-attachments/assets/0ae640a1-a9b1-49a3-949c-4e85e695046c" />
 
 ## Features
 
